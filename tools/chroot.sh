@@ -483,9 +483,10 @@ start_chroot() {
                 warn "Failed to unmount previous mount, continuing anyway"
             fi
         fi
+	sleep 1
    	if losetup -a | grep -q $ROOTFS_IMG; then
         	log  "⚠️  need clean"
-		losetup -d $(losetup -j $ROOTFS_IMG | cut -d: -f1)
+		losetup -j  $ROOTFS_IMG | cut -d: -f1 | while read dev; do losetup -d "$dev" ; done
     	else
         	log "✓ enough"
     	fi
@@ -715,17 +716,18 @@ umount_chroot() {
 
     if [ -f "$ROOTFS_IMG" ] && mountpoint -q "$CHROOT_PATH" 2>/dev/null; then
         log "Force unmounting sparse image..."
-        if umount -f "$CHROOT_PATH" 2>/dev/null; then
+        if run_in_ns umount -f "$CHROOT_PATH" 2>/dev/null; then
             log "Sparse image force unmounted successfully."
-        elif umount -l "$CHROOT_PATH" 2>/dev/null; then
+        elif run_in_ns umount -l "$CHROOT_PATH" 2>/dev/null; then
             log "Sparse image lazy unmounted successfully."
         else
             warn "Failed to unmount sparse image."
         fi
     fi
+    sleep 1
     if losetup -a | grep -q $ROOTFS_IMG; then
         log "⚠️  need clean"
-        losetup -d $(losetup -j $ROOTFS_IMG | cut -d: -f1)
+        run_in_ns losetup -d $(losetup -j "$ROOTFS_IMG" | cut -d: -f1)
     else
         log "✓ enough"
     fi
