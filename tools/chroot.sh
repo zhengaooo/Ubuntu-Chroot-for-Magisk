@@ -427,26 +427,8 @@ create_namespace() {
     # Run a subshell within the new namespaces.
     # This subshell backgrounds "sleep" and then echoes the correct PID of the
     # "sleep" process, guaranteeing we target the process inside the namespaces.
-    pre_init=$(cat <<'EOF'
-#!/bin/sh
-echo $$ > "$1"
 
-trap 'echo "[INFO] HUP Recive"' HUP
-do_exit() {
-    echo "=====>Exit"
-    exit 0
-}
-trap - TERM
-trap -  INT
-trap do_exit TERM
-trap do_exit INT
-echo "Start Deamon"
-while true; do
-    wait
-done
-EOF
-)
-    unshare $unshare_flags sh -c "${pre_init}" -- "$pid_file"  &
+    unshare $unshare_flags sh -c '/data/local/ubuntu-chroot/simple_init < /dev/null  > /dev/null 2>&1 & echo $! > "$1"; exit 0' -- "$pid_file" 
 
     # Wait a moment for the PID file to be written
     local attempts=0
