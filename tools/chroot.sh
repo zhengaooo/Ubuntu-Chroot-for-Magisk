@@ -305,7 +305,7 @@ apply_internet_fix() {
     internet_fix_cmd=$(cat <<EOF
 # --- System-level Setup ---
 mkdir -p /run/resolvconf
-printf '$dns_servers' > /run/resolvconf/resolv.conf
+printf "${dns_servers//%/%%}" > /run/resolvconf/resolv.conf
 ln -sf /run/resolvconf/resolv.conf /etc/resolv.conf
 printf '127.0.0.1\tlocalhost %s\n::1\t\tlocalhost ip6-localhost ip6-loopback\n' '$C_HOSTNAME' > /etc/hosts
 echo '$C_HOSTNAME' > /proc/sys/kernel/hostname
@@ -426,8 +426,27 @@ create_namespace() {
 
     # Run a subshell within the new namespaces.
     # This subshell backgrounds "sleep" and then echoes the correct PID of the
-    # "sleep" process, guaranteeing we target the process inside the namespaces
-    unshare $unshare_flags sh -c 'busybox sleep infinity & echo $! > "$1"' -- "$pid_file"
+    # "sleep" process, guaranteeing we target the process inside the namespaces.
+    pre_init=$(cat <<'EOF'
+#!/bin/sh
+echo $$ > "$1"
+
+trap 'echo "[INFO] HUP Recive"' HUP
+do_exit() {
+    echo "=====>Exit"
+    exit 0
+}
+trap - TERM
+trap -  INT
+trap do_exit TERM
+trap do_exit INT
+echo "Start Deamon"
+while true; do
+    wait
+done
+EOF
+)
+    unshare $unshare_flags sh -c "${pre_init}" -- "$pid_file"  &
 
     # Wait a moment for the PID file to be written
     local attempts=0
@@ -482,6 +501,12 @@ start_chroot() {
                 warn "Failed to unmount previous mount, continuing anyway"
             fi
         fi
+   	if losetup -a | grep -q $ROOTFS_IMG; then
+        	log  "⚠️  need clean"
+		losetup -d $(losetup -j $ROOTFS_IMG | cut -d: -f1)
+    	else
+        	log "✓ enough"
+    	fi
 
         # Ugly fix for users who already have a sparse image without a journal
         if ! tune2fs -l "$ROOTFS_IMG" | grep -q "has_journal"; then
@@ -492,9 +517,8 @@ start_chroot() {
 
         # Check and repair filesystem before mounting to prevent kernel panics
         log "Checking filesystem integrity..."
-        local fsck_output=$(e2fsck -f -y "$ROOTFS_IMG" 2>&1)
+        local fsck_output="$(e2fsck -f -y "$ROOTFS_IMG" 2>&1)"
         local fsck_exit=$?
-
         # Exit codes: 0=no errors, 1=corrected, 2=corrected/reboot, 4+=failed
         if [ $fsck_exit -ge 4 ]; then
             error "Filesystem check failed (exit: $fsck_exit)"
@@ -717,6 +741,12 @@ umount_chroot() {
             warn "Failed to unmount sparse image."
         fi
     fi
+    if losetup -a | grep -q $ROOTFS_IMG; then
+        log "⚠️  need clean"
+        losetup -d $(losetup -j $ROOTFS_IMG | cut -d: -f1)
+    else
+        log "✓ enough"
+    fi
 }
 
 enter_chroot() {
@@ -815,7 +845,7 @@ backup_chroot() {
 
         # Check and repair filesystem before mounting to prevent mount failures
         log "Checking filesystem integrity before backup..."
-        local fsck_output=$(e2fsck -f -y "$ROOTFS_IMG" 2>&1)
+        local fsck_output="$(e2fsck -f -y "$ROOTFS_IMG" 2>&1)"
         local fsck_exit=$?
 
         # Exit codes: 0=no errors, 1=corrected, 2=corrected/reboot, 4+=failed
@@ -971,7 +1001,7 @@ resize_sparse() {
 
     # Filesystem check
     log "Checking filesystem integrity..."
-    local fsck_output=$(e2fsck -f -y "$ROOTFS_IMG" 2>&1)
+    local fsck_output="$(e2fsck -f -y "$ROOTFS_IMG" 2>&1)"
     local fsck_exit=$?
 
     # Exit codes: 0=no errors, 1=corrected, 2=corrected/reboot, 4+=failed
