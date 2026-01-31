@@ -428,7 +428,28 @@ create_namespace() {
     # This subshell backgrounds "sleep" and then echoes the correct PID of the
     # "sleep" process, guaranteeing we target the process inside the namespaces.
 
-    unshare $unshare_flags sh -c '/data/local/ubuntu-chroot/simple_init < /dev/null  > /dev/null 2>&1 & echo $! > "$1"; exit 0' -- "$pid_file" 
+    unshare $unshare_flags --fork sh -c '
+(
+
+exec > /dev/null 2>&1
+exec < /dev/null
+
+do_exit() {
+    exit 0
+}
+
+trap '' HUP
+trap - INT
+trap - TERM
+trap do_exit TERM
+trap do_exit INT
+while true; do
+    read -t 1
+    wait
+done
+)  &
+echo $! > "$1"
+exit 0 ' -- "$pid_file"
 
     # Wait a moment for the PID file to be written
     local attempts=0
