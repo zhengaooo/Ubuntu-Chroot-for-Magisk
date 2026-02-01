@@ -193,7 +193,7 @@ advanced_mount() {
     local src="$1" tgt="$2" type="$3" opts="$4"
 
     # Always create the target directory silently if it doesn't exist
-    [ ! -d "$tgt" ] && run_in_ns mkdir -p "$tgt" 2>/dev/null
+    run_in_ns [ ! -d "$tgt" ] && run_in_ns mkdir -p "$tgt" 2>/dev/null
 
     if [ "$type" = "bind" ]; then
         [ -e "$src" ] || { warn "Source for bind mount does not exist: $src"; return 1; }
@@ -373,6 +373,15 @@ kill_chroot_processes() {
     pids=$(lsof 2>/dev/null | grep "$CHROOT_PATH" | awk '{print $2}' | uniq)
 
     if [ -n "$pids" ]; then
+        kill $pids 2>/dev/null
+        log "Killed chroot processes."
+    else
+        log "No chroot processes found."
+    fi
+
+    sleep 2
+    pids=$(lsof 2>/dev/null | grep "$CHROOT_PATH" | awk '{print $2}' | uniq)
+        if [ -n "$pids" ]; then
         kill -9 $pids 2>/dev/null
         log "Killed chroot processes."
     else
@@ -427,8 +436,11 @@ create_namespace() {
     # Run a subshell within the new namespaces.
     # This subshell backgrounds "sleep" and then echoes the correct PID of the
     # "sleep" process, guaranteeing we target the process inside the namespaces.
+    chmod +x ${BASE_CHROOT_DIR}/simple_init
 
-    unshare $unshare_flags sh -c '/data/local/ubuntu-chroot/simple_init < /dev/null  > /dev/null 2>&1 & echo $! > "$1"; exit 0' -- "$pid_file" 
+    unshare $unshare_flags sh -c \
+        ' "$2"/simple_init  < /dev/null > /dev/null 2>&1 & echo $! > "$1"; exit 0 '\
+        -- "$pid_file" "${BASE_CHROOT_DIR}"
 
     # Wait a moment for the PID file to be written
     local attempts=0
@@ -596,22 +608,21 @@ start_chroot() {
     fi
 
     log "Setting up minimal cgroups for Docker..."
-    run_in_ns mkdir -p "$CHROOT_PATH/sys/fs/cgroup"
-    if run_in_ns mount -t tmpfs -o mode=755 tmpfs "$CHROOT_PATH/sys/fs/cgroup" 2>/dev/null; then
-        echo "$CHROOT_PATH/sys/fs/cgroup" >> "$MOUNTED_FILE"
-        run_in_ns mkdir -p "$CHROOT_PATH/sys/fs/cgroup/devices"
-        if grep -q devices /proc/cgroups 2>/dev/null; then
-            if run_in_ns mount -t cgroup -o devices cgroup "$CHROOT_PATH/sys/fs/cgroup/devices" 2>/dev/null; then
-                log "Cgroup devices mounted successfully."
-                echo "$CHROOT_PATH/sys/fs/cgroup/devices" >> "$MOUNTED_FILE"
-            else
-                warn "Failed to mount cgroup devices."
-            fi
-        else
-            warn "Devices cgroup controller not available."
-        fi
-    else
-        warn "Failed to mount cgroup tmpfs."
+    opts='-o rw,nosuid,nodev,noexec,relatime'
+    # try to mount cgroup root dir and exit in case of failure
+    CGROUP_MOUNT="sys/fs/cgroup"
+    PROC_CGROUPS="/proc/cgroups"
+    advanced_mount "tmpfs" "$CHROOT_PATH/$CGROUP_MOUNT" "tmpfs" "${opts}"
+
+    if [[ -f "$PROC_CGROUPS" ]]; then
+        while read -r subsystem hierarchy num_cgroups enabled; do
+
+            [[ "$subsystem" == "#subsys_name" ]] && continue
+            [[ -z "$subsystem" ]] && continue
+            [[ "$subsystem" == subsystem* ]] && continue
+            [[ "$enabled" -eq 1 ]] && \
+                advanced_mount "${subsystem}" "${CHROOT_PATH}/${CGROUP_MOUNT}/${subsystem}" "cgroup" "${opts},${subsystem}"
+        done < "$PROC_CGROUPS"
     fi
 
     setup_storage
@@ -631,6 +642,9 @@ start_chroot() {
     sysctl -w kernel.shmmax=268435456 >/dev/null 2>&1
     sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
 
+    #use supervisord as service mange
+    run_in_chroot  "nohup /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf > /dev/null 2>&1 &"
+
     if [ "$SKIP_POST_EXEC" -eq 0 ] && [ -f "$POST_EXEC_SCRIPT" ] && [ -x "$POST_EXEC_SCRIPT" ]; then
         log "Running post-execution script..."
         SCRIPT_B64=$(busybox base64 -w 0 "$POST_EXEC_SCRIPT")
@@ -647,6 +661,9 @@ start_chroot() {
 
 stop_chroot() {
     log "Stopping chroot environment..."
+
+    #shutdonw service
+    run_in_chroot "/usr/bin/supervisorctl shutdown" > /dev/null 2>&1
 
     # Run fstrim on sparse image before stopping if using sparse method
     if [ -f "$ROOTFS_IMG" ]; then
@@ -727,7 +744,7 @@ umount_chroot() {
     sleep 1
     if losetup -a | grep -q $ROOTFS_IMG; then
         log "⚠️  need clean"
-        run_in_ns losetup -d $(losetup -j "$ROOTFS_IMG" | cut -d: -f1)
+        run_in_ns losetup -j  $ROOTFS_IMG | cut -d: -f1 | while read dev; do run_in_ns losetup -d $dev ; done
     else
         log "✓ enough"
     fi
