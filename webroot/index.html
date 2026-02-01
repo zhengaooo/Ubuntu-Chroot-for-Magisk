@@ -154,6 +154,16 @@
             </div>
           </div>
 
+          <div class="setting-section">
+            <h4>Pre-shutdown Script</h4>
+            <p class="setting-desc">Commands to run before chroot stop</p>
+            <textarea id="pre-shutdown-script" class="script-editor" placeholder="echo 'Chroot started successfully'&#10;# Add your commands here" rows="6"></textarea>
+            <div class="script-actions">
+              <button id="save-shutdown-script" class="btn small">Save</button>
+              <button id="clear-shutdown-script" class="btn outline small">Clear</button>
+            </div>
+          </div>
+
           <!-- Update Section -->
           <div class="setting-section">
             <h4>Update Chroot</h4>

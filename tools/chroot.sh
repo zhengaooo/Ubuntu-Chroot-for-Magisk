@@ -18,6 +18,7 @@ SCRIPT_DIR="$(dirname "$0")"
 C_HOSTNAME="ubuntu"
 MOUNTED_FILE="${BASE_CHROOT_DIR}/mount.points"
 POST_EXEC_SCRIPT="${BASE_CHROOT_DIR}/post_exec.sh"
+PRE_SHUTDOWN_SCRIPT="${BASE_CHROOT_DIR}/pre_shutdown.sh"
 HOLDER_PID_FILE="${BASE_CHROOT_DIR}/holder.pid"
 SILENT=0
 SKIP_POST_EXEC=0
@@ -642,9 +643,6 @@ start_chroot() {
     sysctl -w kernel.shmmax=268435456 >/dev/null 2>&1
     sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
 
-    #use supervisord as service mange
-    run_in_chroot  "nohup /usr/bin/supervisord -n -c /etc/supervisor/supervisord.conf > /dev/null 2>&1 &"
-
     if [ "$SKIP_POST_EXEC" -eq 0 ] && [ -f "$POST_EXEC_SCRIPT" ] && [ -x "$POST_EXEC_SCRIPT" ]; then
         log "Running post-execution script..."
         SCRIPT_B64=$(busybox base64 -w 0 "$POST_EXEC_SCRIPT")
@@ -662,8 +660,11 @@ start_chroot() {
 stop_chroot() {
     log "Stopping chroot environment..."
 
-    #shutdonw service
-    run_in_chroot "/usr/bin/supervisorctl shutdown" > /dev/null 2>&1
+    if [ -f "$PRE_SHUTDOWN_SCRIPT" ] && [ -x "$PRE_SHUTDOWN_SCRIPT" ]; then
+        log "Running pre shutdown script..."
+        SCRIPT_B64=$(busybox base64 -w 0 "$PRE_SHUTDOWN_SCRIPT")
+        run_in_chroot "echo '$SCRIPT_B64' | base64 -d | bash"
+    fi
 
     # Run fstrim on sparse image before stopping if using sparse method
     if [ -f "$ROOTFS_IMG" ]; then

@@ -11,6 +11,7 @@
   const BOOT_FILE = `${CHROOT_DIR}/boot-service`;
   const DOZE_OFF_FILE = `${CHROOT_DIR}/.doze_off`;
   const POST_EXEC_SCRIPT = `${CHROOT_DIR}/post_exec.sh`;
+  const PRE_SHUTDOWN_SCRIPT = `${CHROOT_DIR}/pre_shutdown.sh`;
   const HOTSPOT_SCRIPT = `${CHROOT_DIR}/start-hotspot`;
   const FORWARD_NAT_SCRIPT = `${CHROOT_DIR}/forward-nat.sh`;
   const OTA_UPDATER = `${CHROOT_DIR}/ota/updater.sh`;
@@ -33,8 +34,11 @@
     settingsPopup: document.getElementById('settings-popup'),
     closePopup: document.getElementById('close-popup'),
     postExecScript: document.getElementById('post-exec-script'),
+    preShutdonwScript: document.getElementById('pre-shutdown-script'),
     saveScript: document.getElementById('save-script'),
     clearScript: document.getElementById('clear-script'),
+    saveDownScript: document.getElementById('save-shutdown-script'),
+    clearDownScript: document.getElementById('clear-shutdown-script'),
     updateBtn: document.getElementById('update-btn'),
     backupBtn: document.getElementById('backup-btn'),
     debugToggle: document.getElementById('debug-toggle'),
@@ -2312,7 +2316,7 @@
     PopupManager.open(els.settingsPopup);
 
     // Load script in background (will update textarea after popup is already open)
-    loadPostExecScript().catch(() => {
+    loadScript().catch(() => {
       // Silently fail - script loading shouldn't block popup
     });
 
@@ -2326,7 +2330,7 @@
     PopupManager.close(els.settingsPopup);
   }
 
-  async function loadPostExecScript(){
+  async function loadScript(){
     if(!rootAccessConfirmed){
       els.postExecScript.value = '';
       return;
@@ -2334,19 +2338,21 @@
     try{
       const script = await runCmdSync(`cat ${POST_EXEC_SCRIPT} 2>/dev/null || echo ''`);
       els.postExecScript.value = String(script || '').trim();
+      const script_1 = await runCmdSync(`cat ${PRE_SHUTDOWN_SCRIPT} 2>/dev/null || echo ''`);
+      els.preShutdonwScript.value = String(script_1 || '').trim();
     }catch(e){
       appendConsole(`Failed to load post-exec script: ${e.message}`, 'err');
       els.postExecScript.value = '';
     }
   }
 
-  async function savePostExecScript(){
+  async function savePostExecScript(ele, dst){
     if(!rootAccessConfirmed){
       appendConsole('Cannot save post-exec script: root access not available', 'err');
       return;
     }
     try{
-      const script = els.postExecScript.value.trim();
+      const script = ele.value.trim();
       // Use base64 encoding to safely transfer complex scripts with special characters
       // This avoids all shell escaping issues
       // Properly encode UTF-8 to base64 (handle large scripts by chunking)
@@ -2358,22 +2364,22 @@
         binaryString += String.fromCharCode.apply(null, chunk);
       }
       const base64Script = btoa(binaryString);
-      await runCmdSync(`echo '${base64Script}' | base64 -d > ${POST_EXEC_SCRIPT}`);
-      await runCmdSync(`chmod 755 ${POST_EXEC_SCRIPT}`);
+      await runCmdSync(`echo '${base64Script}' | base64 -d > ${dst}`);
+      await runCmdSync(`chmod 755 ${dst}`);
       appendConsole('Post-exec script saved successfully', 'success');
     }catch(e){
       appendConsole(`Failed to save post-exec script: ${e.message}`, 'err');
     }
   }
 
-  async function clearPostExecScript(){
-    els.postExecScript.value = '';
+  async function clearPostExecScript(ele, dst){
+    ele.value = '';
     if(!rootAccessConfirmed){
       appendConsole('Cannot clear post-exec script: root access not available', 'err');
       return;
     }
     try{
-      await runCmdSync(`echo '' > ${POST_EXEC_SCRIPT}`);
+      await runCmdSync(`echo '' > ${dst}`);
       appendConsole('Post-exec script cleared successfully', 'info');
     }catch(e){
       appendConsole(`Failed to clear post-exec script: ${e.message}`, 'err');
@@ -2734,8 +2740,11 @@
       // Disable individual popup elements using centralized ButtonState
       const buttonsToDisable = [
         { btn: els.postExecScript, disabled: disabled || !chrootExists },
+        { btn: els.preShutdonwScript, disabled: disabled || !chrootExists },
         { btn: els.saveScript, disabled: disabled || !chrootExists },
         { btn: els.clearScript, disabled: disabled || !chrootExists },
+        { btn: els.saveDownScript, disabled: disabled || !chrootExists },
+        { btn: els.clearDownScript, disabled: disabled || !chrootExists },
         { btn: els.updateBtn, disabled: disabled || !chrootExists },
         { btn: els.backupBtn, disabled: disabled || !chrootExists },
         { btn: els.restoreBtn, disabled: disabled },
@@ -3506,13 +3515,26 @@
     e.preventDefault();
     e.stopPropagation();
     await animateButton(e.currentTarget);
-    savePostExecScript();
+    console.log(e)
+    savePostExecScript( els.postExecScript, POST_EXEC_SCRIPT );
   });
   els.clearScript.addEventListener('click', async (e) => {
     e.preventDefault();
     e.stopPropagation();
     await animateButton(e.currentTarget);
-    clearPostExecScript();
+    clearPostExecScript(els.postExecScript, POST_EXEC_SCRIPT);
+  });
+  els.saveDownScript.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await animateButton(e.currentTarget);
+    savePostExecScript(els.preShutdonwScript, PRE_SHUTDOWN_SCRIPT);
+  });
+  els.clearDownScript.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await animateButton(e.currentTarget);
+    clearPostExecScript(els.preShutdonwScript, PRE_SHUTDOWN_SCRIPT);
   });
   els.updateBtn.addEventListener('click', () => updateChroot());
   els.backupBtn.addEventListener('click', () => {
